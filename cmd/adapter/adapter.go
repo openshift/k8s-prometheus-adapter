@@ -17,8 +17,11 @@ limitations under the License.
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,6 +35,7 @@ import (
 	"k8s.io/apiserver/pkg/util/logs"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/transport"
 
 	prom "github.com/directxman12/k8s-prometheus-adapter/pkg/client"
 	mprom "github.com/directxman12/k8s-prometheus-adapter/pkg/client/metrics"
@@ -49,10 +53,16 @@ type PrometheusAdapter struct {
 	PrometheusAuthInCluster bool
 	// PrometheusAuthConf is the kubeconfig file that contains auth details used to connect to Prometheus
 	PrometheusAuthConf string
+	// PrometheusCAFile points to the file containing the ca-root for connecting with Prometheus
+	PrometheusCAFile string
+	// PrometheusTokenFile points to the file that contains the bearer token when connecting with Prometheus
+	PrometheusTokenFile string
 	// AdapterConfigFile points to the file containing the metrics discovery configuration.
 	AdapterConfigFile string
 	// MetricsRelistInterval is the interval at which to relist the set of available metrics
 	MetricsRelistInterval time.Duration
+	// MetricsMaxAge is the period to query available metrics for
+	MetricsMaxAge time.Duration
 
 	metricsConfig *adaptercfg.MetricsDiscoveryConfig
 }
@@ -62,11 +72,34 @@ func (cmd *PrometheusAdapter) makePromClient() (prom.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid Prometheus URL %q: %v", baseURL, err)
 	}
-	promHTTPClient, err := makeHTTPClient(cmd.PrometheusAuthInCluster, cmd.PrometheusAuthConf)
-	if err != nil {
-		return nil, err
+
+	var httpClient *http.Client
+
+	if cmd.PrometheusCAFile != "" {
+		prometheusCAClient, err := makePrometheusCAClient(cmd.PrometheusCAFile)
+		if err != nil {
+			return nil, err
+		}
+		httpClient = prometheusCAClient
+		glog.Info("successfully loaded ca from file")
+	} else {
+		kubeconfigHTTPClient, err := makeKubeconfigHTTPClient(cmd.PrometheusAuthInCluster, cmd.PrometheusAuthConf)
+		if err != nil {
+			return nil, err
+		}
+		httpClient = kubeconfigHTTPClient
+		glog.Info("successfully using in-cluster auth")
 	}
-	genericPromClient := prom.NewGenericAPIClient(promHTTPClient, baseURL)
+
+	if cmd.PrometheusTokenFile != "" {
+		data, err := ioutil.ReadFile(cmd.PrometheusTokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read prometheus-token-file: %v", err)
+		}
+		httpClient.Transport = transport.NewBearerAuthRoundTripper(string(data), httpClient.Transport)
+	}
+
+	genericPromClient := prom.NewGenericAPIClient(httpClient, baseURL)
 	instrumentedGenericPromClient := mprom.InstrumentGenericAPIClient(genericPromClient, baseURL.String())
 	return prom.NewClientForAPI(instrumentedGenericPromClient), nil
 }
@@ -78,11 +111,17 @@ func (cmd *PrometheusAdapter) addFlags() {
 		"use auth details from the in-cluster kubeconfig when connecting to prometheus.")
 	cmd.Flags().StringVar(&cmd.PrometheusAuthConf, "prometheus-auth-config", cmd.PrometheusAuthConf,
 		"kubeconfig file used to configure auth when connecting to Prometheus.")
+	cmd.Flags().StringVar(&cmd.PrometheusCAFile, "prometheus-ca-file", cmd.PrometheusCAFile,
+		"Optional CA file to use when connecting with Prometheus")
+	cmd.Flags().StringVar(&cmd.PrometheusTokenFile, "prometheus-token-file", cmd.PrometheusTokenFile,
+		"Optional file containing the bearer token to use when connecting with Prometheus")
 	cmd.Flags().StringVar(&cmd.AdapterConfigFile, "config", cmd.AdapterConfigFile,
 		"Configuration file containing details of how to transform between Prometheus metrics "+
 			"and custom metrics API resources")
 	cmd.Flags().DurationVar(&cmd.MetricsRelistInterval, "metrics-relist-interval", cmd.MetricsRelistInterval, ""+
 		"interval at which to re-list the set of all available metrics from Prometheus")
+	cmd.Flags().DurationVar(&cmd.MetricsMaxAge, "metrics-max-age", cmd.MetricsMaxAge, ""+
+		"period for which to query the set of available metrics from Prometheus")
 }
 
 func (cmd *PrometheusAdapter) loadConfig() error {
@@ -105,6 +144,10 @@ func (cmd *PrometheusAdapter) makeProvider(promClient prom.Client, stopCh <-chan
 		return nil, nil
 	}
 
+	if cmd.MetricsMaxAge < cmd.MetricsRelistInterval {
+		return nil, fmt.Errorf("max age must not be less than relist interval")
+	}
+
 	// grab the mapper and dynamic client
 	mapper, err := cmd.RESTMapper()
 	if err != nil {
@@ -122,7 +165,7 @@ func (cmd *PrometheusAdapter) makeProvider(promClient prom.Client, stopCh <-chan
 	}
 
 	// construct the provider and start it
-	cmProvider, runner := cmprov.NewPrometheusProvider(mapper, dynClient, promClient, namers, cmd.MetricsRelistInterval)
+	cmProvider, runner := cmprov.NewPrometheusProvider(mapper, dynClient, promClient, namers, cmd.MetricsRelistInterval, cmd.MetricsMaxAge)
 	runner.RunUntil(stopCh)
 
 	return cmProvider, nil
@@ -173,11 +216,14 @@ func main() {
 	cmd := &PrometheusAdapter{
 		PrometheusURL:         "https://localhost",
 		MetricsRelistInterval: 10 * time.Minute,
+		MetricsMaxAge:         20 * time.Minute,
 	}
 	cmd.Name = "prometheus-metrics-adapter"
 	cmd.addFlags()
 	cmd.Flags().AddGoFlagSet(flag.CommandLine) // make sure we get the glog flags
-	cmd.Flags().Parse(os.Args)
+	if err := cmd.Flags().Parse(os.Args); err != nil {
+		glog.Fatalf("unable to parse flags: %v", err)
+	}
 
 	// make the prometheus client
 	promClient, err := cmd.makePromClient()
@@ -212,8 +258,8 @@ func main() {
 	}
 }
 
-// makeHTTPClient constructs an HTTP for connecting with the given auth options.
-func makeHTTPClient(inClusterAuth bool, kubeConfigPath string) (*http.Client, error) {
+// makeKubeconfigHTTPClient constructs an HTTP for connecting with the given auth options.
+func makeKubeconfigHTTPClient(inClusterAuth bool, kubeConfigPath string) (*http.Client, error) {
 	// make sure we're not trying to use two different sources of auth
 	if inClusterAuth && kubeConfigPath != "" {
 		return nil, fmt.Errorf("may not use both in-cluster auth and an explicit kubeconfig at the same time")
@@ -245,4 +291,24 @@ func makeHTTPClient(inClusterAuth bool, kubeConfigPath string) (*http.Client, er
 		return nil, fmt.Errorf("unable to construct client transport for connecting to Prometheus: %v", err)
 	}
 	return &http.Client{Transport: tr}, nil
+}
+
+func makePrometheusCAClient(caFilename string) (*http.Client, error) {
+	data, err := ioutil.ReadFile(caFilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read prometheus-ca-file: %v", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("no certs found in prometheus-ca-file")
+	}
+
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs: pool,
+			},
+		},
+	}, nil
 }
