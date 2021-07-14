@@ -10,6 +10,7 @@ RUN go mod download
 COPY pkg pkg
 COPY cmd cmd
 COPY Makefile Makefile
+COPY vendor vendor
 
 ARG ARCH
 RUN make prometheus-adapter
