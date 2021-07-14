@@ -30,11 +30,13 @@ import (
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	metrics "k8s.io/metrics/pkg/apis/metrics"
+
 	"sigs.k8s.io/metrics-server/pkg/api"
 
-	"github.com/kubernetes-sigs/prometheus-adapter/pkg/client"
-	"github.com/kubernetes-sigs/prometheus-adapter/pkg/config"
-	"github.com/kubernetes-sigs/prometheus-adapter/pkg/naming"
+	"sigs.k8s.io/prometheus-adapter/pkg/client"
+	"sigs.k8s.io/prometheus-adapter/pkg/config"
+	"sigs.k8s.io/prometheus-adapter/pkg/naming"
+
 	pmodel "github.com/prometheus/common/model"
 )
 
@@ -119,10 +121,13 @@ type nsQueryResults struct {
 	err       error
 }
 
-// GetContainerMetrics implements the api.MetricsProvider interface. It may return nil, nil, nil.
-func (p *resourceProvider) GetContainerMetrics(pods ...apitypes.NamespacedName) ([]api.TimeInfo, [][]metrics.ContainerMetrics) {
+// GetPodMetrics implements the api.MetricsProvider interface.
+func (p *resourceProvider) GetPodMetrics(pods ...apitypes.NamespacedName) ([]api.TimeInfo, [][]metrics.ContainerMetrics, error) {
+	resTimes := make([]api.TimeInfo, len(pods))
+	resMetrics := make([][]metrics.ContainerMetrics, len(pods))
+
 	if len(pods) == 0 {
-		return nil, nil
+		return resTimes, resMetrics, nil
 	}
 
 	// TODO(directxman12): figure out how well this scales if we go to list 1000+ pods
@@ -162,13 +167,11 @@ func (p *resourceProvider) GetContainerMetrics(pods ...apitypes.NamespacedName) 
 
 	// convert the unorganized per-container results into results grouped
 	// together by namespace, pod, and container
-	resTimes := make([]api.TimeInfo, len(pods))
-	resMetrics := make([][]metrics.ContainerMetrics, len(pods))
 	for i, pod := range pods {
 		p.assignForPod(pod, resultsByNs, &resMetrics[i], &resTimes[i])
 	}
 
-	return resTimes, resMetrics
+	return resTimes, resMetrics, nil
 }
 
 // assignForPod takes the resource metrics for all containers in the given pod
@@ -251,10 +254,13 @@ func (p *resourceProvider) assignForPod(pod apitypes.NamespacedName, resultsByNs
 	*resMetrics = containerMetricsList
 }
 
-// GetNodeMetrics implements the api.MetricsProvider interface. It may return nil, nil.
-func (p *resourceProvider) GetNodeMetrics(nodes ...string) ([]api.TimeInfo, []corev1.ResourceList) {
+// GetNodeMetrics implements the api.MetricsProvider interface.
+func (p *resourceProvider) GetNodeMetrics(nodes ...string) ([]api.TimeInfo, []corev1.ResourceList, error) {
+	resTimes := make([]api.TimeInfo, len(nodes))
+	resMetrics := make([]corev1.ResourceList, len(nodes))
+
 	if len(nodes) == 0 {
-		return nil, nil
+		return resTimes, resMetrics, nil
 	}
 
 	now := pmodel.Now()
@@ -263,11 +269,8 @@ func (p *resourceProvider) GetNodeMetrics(nodes ...string) ([]api.TimeInfo, []co
 	qRes := p.queryBoth(now, nodeResource, "", nodes...)
 	if qRes.err != nil {
 		klog.Errorf("failed querying node metrics: %v", qRes.err)
-		return nil, nil
+		return resTimes, resMetrics, nil
 	}
-
-	resTimes := make([]api.TimeInfo, len(nodes))
-	resMetrics := make([]corev1.ResourceList, len(nodes))
 
 	// organize the results
 	for i, nodeName := range nodes {
@@ -307,7 +310,7 @@ func (p *resourceProvider) GetNodeMetrics(nodes ...string) ([]api.TimeInfo, []co
 		}
 	}
 
-	return resTimes, resMetrics
+	return resTimes, resMetrics, nil
 }
 
 // queryBoth queries for both CPU and memory metrics on the given

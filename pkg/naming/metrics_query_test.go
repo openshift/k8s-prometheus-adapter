@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"testing"
 
-	prom "github.com/kubernetes-sigs/prometheus-adapter/pkg/client"
-	pmodel "github.com/prometheus/common/model"
 	labels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
+
+	prom "sigs.k8s.io/prometheus-adapter/pkg/client"
+
+	pmodel "github.com/prometheus/common/model"
 )
 
 type resourceConverterMock struct {
@@ -272,7 +274,15 @@ func TestBuildSelector(t *testing.T) {
 
 func TestBuildExternalSelector(t *testing.T) {
 	mustNewQuery := func(queryTemplate string) MetricsQuery {
-		mq, err := NewMetricsQuery(queryTemplate, &resourceConverterMock{true})
+		mq, err := NewExternalMetricsQuery(queryTemplate, &resourceConverterMock{true}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mq
+	}
+
+	mustNewNonNamespacedQuery := func(queryTemplate string) MetricsQuery {
+		mq, err := NewExternalMetricsQuery(queryTemplate, &resourceConverterMock{true}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -346,6 +356,19 @@ func TestBuildExternalSelector(t *testing.T) {
 			check: checks(
 				hasError(nil),
 				hasSelector("default [foo bar]"),
+			),
+		},
+		{
+			name: "multiple GroupBySlice values with namespace disabled",
+
+			mq:             mustNewNonNamespacedQuery(`<<index .LabelValuesByName "namespaces">> <<.GroupBySlice>>`),
+			namespace:      "default",
+			groupBySlice:   []string{"foo", "bar"},
+			metricSelector: labels.NewSelector(),
+
+			check: checks(
+				hasError(nil),
+				hasSelector(" [foo bar]"),
 			),
 		},
 		{

@@ -27,8 +27,15 @@ import (
 	"os"
 	"time"
 
+	basecmd "github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/cmd"
+	"github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/provider"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/transport"
@@ -36,18 +43,16 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/sample-apiserver/pkg/apiserver"
 
-	basecmd "github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/cmd"
-	"github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/provider"
 	"sigs.k8s.io/metrics-server/pkg/api"
 
-	generatedopenapi "github.com/kubernetes-sigs/prometheus-adapter/pkg/api/generated/openapi"
-	prom "github.com/kubernetes-sigs/prometheus-adapter/pkg/client"
-	mprom "github.com/kubernetes-sigs/prometheus-adapter/pkg/client/metrics"
-	adaptercfg "github.com/kubernetes-sigs/prometheus-adapter/pkg/config"
-	cmprov "github.com/kubernetes-sigs/prometheus-adapter/pkg/custom-provider"
-	extprov "github.com/kubernetes-sigs/prometheus-adapter/pkg/external-provider"
-	"github.com/kubernetes-sigs/prometheus-adapter/pkg/naming"
-	resprov "github.com/kubernetes-sigs/prometheus-adapter/pkg/resourceprovider"
+	generatedopenapi "sigs.k8s.io/prometheus-adapter/pkg/api/generated/openapi"
+	prom "sigs.k8s.io/prometheus-adapter/pkg/client"
+	mprom "sigs.k8s.io/prometheus-adapter/pkg/client/metrics"
+	adaptercfg "sigs.k8s.io/prometheus-adapter/pkg/config"
+	cmprov "sigs.k8s.io/prometheus-adapter/pkg/custom-provider"
+	extprov "sigs.k8s.io/prometheus-adapter/pkg/external-provider"
+	"sigs.k8s.io/prometheus-adapter/pkg/naming"
+	resprov "sigs.k8s.io/prometheus-adapter/pkg/resourceprovider"
 )
 
 type PrometheusAdapter struct {
@@ -209,7 +214,7 @@ func (cmd *PrometheusAdapter) makeExternalProvider(promClient prom.Client, stopC
 	return emProvider, nil
 }
 
-func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client) error {
+func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client, stopCh <-chan struct{}) error {
 	if cmd.metricsConfig.ResourceRules == nil {
 		// bail if we don't have rules for setting things up
 		return nil
@@ -225,7 +230,22 @@ func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client) erro
 		return fmt.Errorf("unable to construct resource metrics API provider: %v", err)
 	}
 
-	informers, err := cmd.Informers()
+	rest, err := cmd.ClientConfig()
+	if err != nil {
+		return err
+	}
+
+	client, err := kubernetes.NewForConfig(rest)
+	if err != nil {
+		return err
+	}
+
+	podInformerFactory := informers.NewFilteredSharedInformerFactory(client, 0, corev1.NamespaceAll, func(options *metav1.ListOptions) {
+		options.FieldSelector = "status.phase=Running"
+	})
+	podInformer := podInformerFactory.Core().V1().Pods()
+
+	informer, err := cmd.Informers()
 	if err != nil {
 		return err
 	}
@@ -235,9 +255,11 @@ func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client) erro
 		return err
 	}
 
-	if err := api.Install(provider, informers.Core().V1(), server.GenericAPIServer); err != nil {
+	if err := api.Install(provider, podInformer.Lister(), informer.Core().V1().Nodes().Lister(), server.GenericAPIServer); err != nil {
 		return err
 	}
+
+	go podInformer.Informer().Run(stopCh)
 
 	return nil
 }
@@ -305,7 +327,7 @@ func main() {
 	}
 
 	// attach resource metrics support, if it's needed
-	if err := cmd.addResourceMetricsAPI(promClient); err != nil {
+	if err := cmd.addResourceMetricsAPI(promClient, stopCh); err != nil {
 		klog.Fatalf("unable to install resource metrics API: %v", err)
 	}
 
