@@ -802,16 +802,6 @@ k8s.io/metrics/pkg/apis/external_metrics/v1beta1
 k8s.io/metrics/pkg/apis/metrics
 k8s.io/metrics/pkg/apis/metrics/install
 k8s.io/metrics/pkg/apis/metrics/v1beta1
-# k8s.io/sample-apiserver v0.20.2
-k8s.io/sample-apiserver/pkg/apis/wardle
-k8s.io/sample-apiserver/pkg/apis/wardle/install
-k8s.io/sample-apiserver/pkg/apis/wardle/v1alpha1
-k8s.io/sample-apiserver/pkg/apis/wardle/v1beta1
-k8s.io/sample-apiserver/pkg/apis/wardle/validation
-k8s.io/sample-apiserver/pkg/apiserver
-k8s.io/sample-apiserver/pkg/registry
-k8s.io/sample-apiserver/pkg/registry/wardle/fischer
-k8s.io/sample-apiserver/pkg/registry/wardle/flunder
 # k8s.io/utils v0.0.0-20201110183641-67b214c5f920
 k8s.io/utils/buffer
 k8s.io/utils/integer

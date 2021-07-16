@@ -22,7 +22,6 @@ require (
 	k8s.io/klog/v2 v2.4.0
 	k8s.io/kube-openapi v0.0.0-20210113233702-8566a335510f
 	k8s.io/metrics v0.20.2
-	k8s.io/sample-apiserver v0.20.2
 	sigs.k8s.io/metrics-server v0.4.1-0.20201126131427-ebfc64a74ae4
 )
 
