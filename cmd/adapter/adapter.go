@@ -35,6 +35,7 @@ import (
 	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 
+	customexternalmetrics "github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/apiserver"
 	basecmd "github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/cmd"
 	"github.com/kubernetes-sigs/custom-metrics-apiserver/pkg/provider"
 	"sigs.k8s.io/metrics-server/pkg/api"
@@ -252,7 +253,7 @@ func main() {
 	}
 	cmd.Name = "prometheus-metrics-adapter"
 
-	cmd.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme))
+	cmd.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme, customexternalmetrics.Scheme))
 	cmd.OpenAPIConfig.Info.Title = "prometheus-metrics-adapter"
 	cmd.OpenAPIConfig.Info.Version = "1.0.0"
 
