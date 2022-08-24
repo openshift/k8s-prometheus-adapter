@@ -32,8 +32,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/transport"
@@ -74,6 +74,8 @@ type PrometheusAdapter struct {
 	PrometheusTokenFile string
 	// PrometheusHeaders is a k=v list of headers to set on requests to PrometheusURL
 	PrometheusHeaders []string
+	// PrometheusVerb is a verb to set on requests to PrometheusURL
+	PrometheusVerb string
 	// AdapterConfigFile points to the file containing the metrics discovery configuration.
 	AdapterConfigFile string
 	// MetricsRelistInterval is the interval at which to relist the set of available metrics
@@ -88,6 +90,10 @@ func (cmd *PrometheusAdapter) makePromClient() (prom.Client, error) {
 	baseURL, err := url.Parse(cmd.PrometheusURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Prometheus URL %q: %v", baseURL, err)
+	}
+
+	if cmd.PrometheusVerb != http.MethodGet && cmd.PrometheusVerb != http.MethodPost {
+		return nil, fmt.Errorf("unsupported Prometheus HTTP verb %q. use \"GET\" or \"POST\" instead.", cmd.PrometheusVerb)
 	}
 
 	var httpClient *http.Client
@@ -117,7 +123,7 @@ func (cmd *PrometheusAdapter) makePromClient() (prom.Client, error) {
 	}
 	genericPromClient := prom.NewGenericAPIClient(httpClient, baseURL, parseHeaderArgs(cmd.PrometheusHeaders))
 	instrumentedGenericPromClient := mprom.InstrumentGenericAPIClient(genericPromClient, baseURL.String())
-	return prom.NewClientForAPI(instrumentedGenericPromClient), nil
+	return prom.NewClientForAPI(instrumentedGenericPromClient, cmd.PrometheusVerb), nil
 }
 
 func (cmd *PrometheusAdapter) addFlags() {
@@ -137,6 +143,8 @@ func (cmd *PrometheusAdapter) addFlags() {
 		"Optional file containing the bearer token to use when connecting with Prometheus")
 	cmd.Flags().StringArrayVar(&cmd.PrometheusHeaders, "prometheus-header", cmd.PrometheusHeaders,
 		"Optional header to set on requests to prometheus-url. Can be repeated")
+	cmd.Flags().StringVar(&cmd.PrometheusVerb, "prometheus-verb", cmd.PrometheusVerb,
+		"HTTP verb to set on requests to Prometheus. Possible values: \"GET\", \"POST\"")
 	cmd.Flags().StringVar(&cmd.AdapterConfigFile, "config", cmd.AdapterConfigFile,
 		"Configuration file containing details of how to transform between Prometheus metrics "+
 			"and custom metrics API resources")
@@ -238,15 +246,15 @@ func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client, stop
 		return err
 	}
 
-	client, err := kubernetes.NewForConfig(rest)
+	client, err := metadata.NewForConfig(rest)
 	if err != nil {
 		return err
 	}
 
-	podInformerFactory := informers.NewFilteredSharedInformerFactory(client, 0, corev1.NamespaceAll, func(options *metav1.ListOptions) {
+	podInformerFactory := metadatainformer.NewFilteredSharedInformerFactory(client, 0, corev1.NamespaceAll, func(options *metav1.ListOptions) {
 		options.FieldSelector = "status.phase=Running"
 	})
-	podInformer := podInformerFactory.Core().V1().Pods()
+	podInformer := podInformerFactory.ForResource(corev1.SchemeGroupVersion.WithResource("pods"))
 
 	informer, err := cmd.Informers()
 	if err != nil {
@@ -274,6 +282,7 @@ func main() {
 	// set up flags
 	cmd := &PrometheusAdapter{
 		PrometheusURL:         "https://localhost",
+		PrometheusVerb:        http.MethodGet,
 		MetricsRelistInterval: 10 * time.Minute,
 	}
 	cmd.Name = "prometheus-metrics-adapter"
@@ -283,7 +292,10 @@ func main() {
 	cmd.OpenAPIConfig.Info.Version = "1.0.0"
 
 	cmd.addFlags()
-	cmd.Flags().AddGoFlagSet(flag.CommandLine) // make sure we get the klog flags
+	// make sure we get klog flags
+	local := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	logs.AddGoFlags(local)
+	cmd.Flags().AddGoFlagSet(local)
 	if err := cmd.Flags().Parse(os.Args); err != nil {
 		klog.Fatalf("unable to parse flags: %v", err)
 	}
