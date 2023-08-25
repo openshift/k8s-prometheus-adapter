@@ -22,7 +22,13 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
+	"k8s.io/apiserver/pkg/features"
+	genericapiserver "k8s.io/apiserver/pkg/server"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
@@ -32,8 +38,11 @@ import (
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/apiserver"
-	"sigs.k8s.io/custom-metrics-apiserver/pkg/cmd/server"
+	"sigs.k8s.io/custom-metrics-apiserver/pkg/cmd/options"
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/dynamicmapper"
+	generatedcore "sigs.k8s.io/custom-metrics-apiserver/pkg/generated/openapi/core"
+	generatedcustommetrics "sigs.k8s.io/custom-metrics-apiserver/pkg/generated/openapi/custommetrics"
+	generatedexternalmetrics "sigs.k8s.io/custom-metrics-apiserver/pkg/generated/openapi/externalmetrics"
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
 )
 
@@ -50,7 +59,7 @@ import (
 // Methods on this struct are not safe to call from multiple goroutines without
 // external synchronization.
 type AdapterBase struct {
-	*server.CustomMetricsAdapterServerOptions
+	*options.CustomMetricsAdapterServerOptions
 
 	// Name is the name of the API server.  It defaults to custom-metrics-adapter
 	Name string
@@ -61,6 +70,10 @@ type AdapterBase struct {
 	// DiscoveryInterval specifies the interval at which to recheck discovery
 	// information for the discovery RESTMapper.  It's set from a flag.
 	DiscoveryInterval time.Duration
+	// ClientQPS specifies the maximum QPS for the client-side throttle. It's set from a flag.
+	ClientQPS float32
+	// ClientBurst specifies the maximum QPS burst for client-side throttle. It's set from a flag.
+	ClientBurst int
 
 	// FlagSet is the flagset to add flags to.
 	// It defaults to the normal CommandLine flags
@@ -91,21 +104,18 @@ func (b *AdapterBase) InstallFlags() {
 	b.initFlagSet()
 	b.flagOnce.Do(func() {
 		if b.CustomMetricsAdapterServerOptions == nil {
-			b.CustomMetricsAdapterServerOptions = server.NewCustomMetricsAdapterServerOptions()
-			b.CustomMetricsAdapterServerOptions.OpenAPIConfig = b.OpenAPIConfig
+			b.CustomMetricsAdapterServerOptions = options.NewCustomMetricsAdapterServerOptions()
 		}
 
-		b.SecureServing.AddFlags(b.FlagSet)
-		b.Authentication.AddFlags(b.FlagSet)
-		b.Authorization.AddFlags(b.FlagSet)
-		b.Audit.AddFlags(b.FlagSet)
-		b.Features.AddFlags(b.FlagSet)
+		b.CustomMetricsAdapterServerOptions.AddFlags(b.FlagSet)
 
 		b.FlagSet.StringVar(&b.RemoteKubeConfigFile, "lister-kubeconfig", b.RemoteKubeConfigFile,
 			"kubeconfig file pointing at the 'core' kubernetes server with enough rights to list "+
 				"any described objects")
 		b.FlagSet.DurationVar(&b.DiscoveryInterval, "discovery-interval", b.DiscoveryInterval,
-			"interval at which to refresh API discovery information")
+			"Interval at which to refresh API discovery information")
+		b.FlagSet.Float32Var(&b.ClientQPS, "client-qps", rest.DefaultQPS, "Maximum QPS for client-side throttle")
+		b.FlagSet.IntVar(&b.ClientBurst, "client-burst", rest.DefaultBurst, "Maximum QPS burst for client-side throttle")
 	})
 }
 
@@ -147,6 +157,13 @@ func (b *AdapterBase) ClientConfig() (*rest.Config, error) {
 			return nil, fmt.Errorf("unable to construct lister client config to initialize provider: %v", err)
 		}
 		b.clientConfig = clientConfig
+	}
+
+	if b.ClientQPS > 0 {
+		b.clientConfig.QPS = b.ClientQPS
+	}
+	if b.ClientBurst > 0 {
+		b.clientConfig.Burst = b.ClientBurst
 	}
 	return b.clientConfig, nil
 }
@@ -215,7 +232,43 @@ func (b *AdapterBase) WithExternalMetrics(p provider.ExternalMetricsProvider) {
 	b.emProvider = p
 }
 
-// Config fetches the configuration used to ulitmately create the custom metrics adapter's
+func mergeOpenAPIDefinitions(definitionsGetters []openapicommon.GetOpenAPIDefinitions) openapicommon.GetOpenAPIDefinitions {
+	return func(ref openapicommon.ReferenceCallback) map[string]openapicommon.OpenAPIDefinition {
+		defsMap := make(map[string]openapicommon.OpenAPIDefinition)
+		for _, definitionsGetter := range definitionsGetters {
+			definitions := definitionsGetter(ref)
+			for k, v := range definitions {
+				defsMap[k] = v
+			}
+		}
+		return defsMap
+	}
+}
+
+func (b *AdapterBase) openAPIConfig(createConfig func(getDefinitions openapicommon.GetOpenAPIDefinitions, defNamer *openapinamer.DefinitionNamer) *openapicommon.Config) *openapicommon.Config {
+	definitionsGetters := []openapicommon.GetOpenAPIDefinitions{generatedcore.GetOpenAPIDefinitions}
+	if b.cmProvider != nil {
+		definitionsGetters = append(definitionsGetters, generatedcustommetrics.GetOpenAPIDefinitions)
+	}
+	if b.emProvider != nil {
+		definitionsGetters = append(definitionsGetters, generatedexternalmetrics.GetOpenAPIDefinitions)
+	}
+	getAPIDefinitions := mergeOpenAPIDefinitions(definitionsGetters)
+	openAPIConfig := createConfig(getAPIDefinitions, openapinamer.NewDefinitionNamer(apiserver.Scheme))
+	openAPIConfig.Info.Title = b.Name
+	openAPIConfig.Info.Version = "1.0.0"
+	return openAPIConfig
+}
+
+func (b *AdapterBase) defaultOpenAPIConfig() *openapicommon.Config {
+	return b.openAPIConfig(genericapiserver.DefaultOpenAPIConfig)
+}
+
+func (b *AdapterBase) defaultOpenAPIV3Config() *openapicommon.Config {
+	return b.openAPIConfig(genericapiserver.DefaultOpenAPIV3Config)
+}
+
+// Config fetches the configuration used to ultimately create the custom metrics adapter's
 // API server.  While this method is idempotent, it does "cement" values of some of the other
 // fields, so make sure to only call it just before `Server` or `Run`.
 // Normal users should not need to call this method -- it's for advanced use cases.
@@ -223,17 +276,36 @@ func (b *AdapterBase) Config() (*apiserver.Config, error) {
 	if b.config == nil {
 		b.InstallFlags() // just to be sure
 
-		config, err := b.CustomMetricsAdapterServerOptions.Config()
+		if b.Name == "" {
+			b.Name = "custom-metrics-adapter"
+		}
+
+		if b.OpenAPIConfig == nil {
+			b.OpenAPIConfig = b.defaultOpenAPIConfig()
+		}
+		b.CustomMetricsAdapterServerOptions.OpenAPIConfig = b.OpenAPIConfig
+		if b.OpenAPIV3Config == nil && utilfeature.DefaultFeatureGate.Enabled(features.OpenAPIV3) {
+			b.OpenAPIV3Config = b.defaultOpenAPIV3Config()
+		}
+
+		if errList := b.CustomMetricsAdapterServerOptions.Validate(); len(errList) > 0 {
+			return nil, utilerrors.NewAggregate(errList)
+		}
+
+		serverConfig := genericapiserver.NewConfig(apiserver.Codecs)
+		err := b.CustomMetricsAdapterServerOptions.ApplyTo(serverConfig)
 		if err != nil {
 			return nil, err
 		}
-		b.config = config
+		b.config = &apiserver.Config{
+			GenericConfig: serverConfig,
+		}
 	}
 
 	return b.config, nil
 }
 
-// Server fetches API server object used to ulitmately run the custom metrics adapter.
+// Server fetches API server object used to ultimately run the custom metrics adapter.
 // While this method is idempotent, it does "cement" values of some of the other
 // fields, so make sure to only call it just before `Run`.
 // Normal users should not need to call this method -- it's for advanced use cases.
@@ -242,10 +314,6 @@ func (b *AdapterBase) Server() (*apiserver.CustomMetricsAdapterServer, error) {
 		config, err := b.Config()
 		if err != nil {
 			return nil, err
-		}
-
-		if b.Name == "" {
-			b.Name = "custom-metrics-adapter"
 		}
 
 		// we add in the informers if they're not nil, but we don't try and
