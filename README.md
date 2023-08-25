@@ -1,9 +1,7 @@
 # Prometheus Adapter for Kubernetes Metrics APIs
 
-This repository contains an implementation of the Kubernetes
-[resource metrics](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/resource-metrics-api.md),
-[custom metrics](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/custom-metrics-api.md), and
-[external metrics](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/instrumentation/external-metrics-api.md) APIs.
+This repository contains an implementation of the Kubernetes Custom, Resource and External
+[Metric APIs](https://github.com/kubernetes/metrics).
 
 This adapter is therefore suitable for use with the autoscaling/v2 Horizontal Pod Autoscaler in Kubernetes 1.6+.  
 It can also replace the [metrics server](https://github.com/kubernetes-incubator/metrics-server) on clusters that already run Prometheus and collect the appropriate metrics.
@@ -36,7 +34,7 @@ $ helm install my-release prometheus-community/prometheus-adapter
 
 Official images
 ---
-All official images for releases after v0.8.4 are available in `k8s.gcr.io/prometheus-adapter/prometheus-adapter:$VERSION`. The project also maintains a [staging registry](https://console.cloud.google.com/gcr/images/k8s-staging-prometheus-adapter/GLOBAL/) where images for each commit from the master branch are published. You can use this registry if you need to test a version from a specific commit, or if you need to deploy a patch while waiting for a new release.
+All official images for releases after v0.8.4 are available in `registry.k8s.io/prometheus-adapter/prometheus-adapter:$VERSION`. The project also maintains a [staging registry](https://console.cloud.google.com/gcr/images/k8s-staging-prometheus-adapter/GLOBAL/) where images for each commit from the master branch are published. You can use this registry if you need to test a version from a specific commit, or if you need to deploy a patch while waiting for a new release.
 
 Images for versions v0.8.4 and prior are only available in unofficial registries:
 * https://quay.io/repository/coreos/k8s-prometheus-adapter-amd64
@@ -51,7 +49,7 @@ will attempt to using [Kubernetes in-cluster
 config](https://kubernetes.io/docs/tasks/access-application-cluster/access-cluster/#accessing-the-api-from-a-pod)
 to connect to the cluster.
 
-It takes the following addition arguments specific to configuring how the
+It takes the following additional arguments specific to configuring how the
 adapter talks to Prometheus and the main Kubernetes cluster:
 
 - `--lister-kubeconfig=<path-to-kubeconfig>`: This configures
