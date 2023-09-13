@@ -6,8 +6,9 @@ reviewers:
 - slashpai
 - sthaha
 - jan--f
-- JoaoBraveCoding
 - juanrh
+- rexagod
+- machine424
 
 approvers:
 - simonpasquier
@@ -15,8 +16,9 @@ approvers:
 - slashpai
 - sthaha
 - jan--f
-- JoaoBraveCoding
 - juanrh
+- rexagod
+- machine424
 
 emeritus_approvers:
 - paulfantom
@@ -32,3 +34,4 @@ emeritus_approvers:
 - PhilipGough
 - bison
 - fpetkovski
+- JoaoBraveCoding
