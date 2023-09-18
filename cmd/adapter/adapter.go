@@ -19,9 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"flag"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,7 +29,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
+	"k8s.io/apiserver/pkg/features"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/rest"
@@ -93,7 +93,7 @@ func (cmd *PrometheusAdapter) makePromClient() (prom.Client, error) {
 	}
 
 	if cmd.PrometheusVerb != http.MethodGet && cmd.PrometheusVerb != http.MethodPost {
-		return nil, fmt.Errorf("unsupported Prometheus HTTP verb %q. use \"GET\" or \"POST\" instead.", cmd.PrometheusVerb)
+		return nil, fmt.Errorf("unsupported Prometheus HTTP verb %q; supported verbs: \"GET\" and \"POST\"", cmd.PrometheusVerb)
 	}
 
 	var httpClient *http.Client
@@ -115,11 +115,15 @@ func (cmd *PrometheusAdapter) makePromClient() (prom.Client, error) {
 	}
 
 	if cmd.PrometheusTokenFile != "" {
-		data, err := ioutil.ReadFile(cmd.PrometheusTokenFile)
+		data, err := os.ReadFile(cmd.PrometheusTokenFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read prometheus-token-file: %v", err)
 		}
-		httpClient.Transport = transport.NewBearerAuthRoundTripper(string(data), httpClient.Transport)
+		wrappedTransport := http.DefaultTransport
+		if httpClient.Transport != nil {
+			wrappedTransport = httpClient.Transport
+		}
+		httpClient.Transport = transport.NewBearerAuthRoundTripper(string(data), wrappedTransport)
 	}
 	genericPromClient := prom.NewGenericAPIClient(httpClient, baseURL, parseHeaderArgs(cmd.PrometheusHeaders))
 	instrumentedGenericPromClient := mprom.InstrumentGenericAPIClient(genericPromClient, baseURL.String())
@@ -148,10 +152,13 @@ func (cmd *PrometheusAdapter) addFlags() {
 	cmd.Flags().StringVar(&cmd.AdapterConfigFile, "config", cmd.AdapterConfigFile,
 		"Configuration file containing details of how to transform between Prometheus metrics "+
 			"and custom metrics API resources")
-	cmd.Flags().DurationVar(&cmd.MetricsRelistInterval, "metrics-relist-interval", cmd.MetricsRelistInterval, ""+
+	cmd.Flags().DurationVar(&cmd.MetricsRelistInterval, "metrics-relist-interval", cmd.MetricsRelistInterval,
 		"interval at which to re-list the set of all available metrics from Prometheus")
-	cmd.Flags().DurationVar(&cmd.MetricsMaxAge, "metrics-max-age", cmd.MetricsMaxAge, ""+
+	cmd.Flags().DurationVar(&cmd.MetricsMaxAge, "metrics-max-age", cmd.MetricsMaxAge,
 		"period for which to query the set of available metrics from Prometheus")
+
+	// Add logging flags
+	logs.AddFlags(cmd.Flags())
 }
 
 func (cmd *PrometheusAdapter) loadConfig() error {
@@ -266,7 +273,7 @@ func (cmd *PrometheusAdapter) addResourceMetricsAPI(promClient prom.Client, stop
 		return err
 	}
 
-	if err := api.Install(provider, podInformer.Lister(), informer.Core().V1().Nodes().Lister(), server.GenericAPIServer); err != nil {
+	if err := api.Install(provider, podInformer.Lister(), informer.Core().V1().Nodes().Lister(), server.GenericAPIServer, nil); err != nil {
 		return err
 	}
 
@@ -287,17 +294,21 @@ func main() {
 	}
 	cmd.Name = "prometheus-metrics-adapter"
 
-	cmd.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme, customexternalmetrics.Scheme))
-	cmd.OpenAPIConfig.Info.Title = "prometheus-metrics-adapter"
-	cmd.OpenAPIConfig.Info.Version = "1.0.0"
-
 	cmd.addFlags()
-	// make sure we get klog flags
-	local := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	logs.AddGoFlags(local)
-	cmd.Flags().AddGoFlagSet(local)
 	if err := cmd.Flags().Parse(os.Args); err != nil {
 		klog.Fatalf("unable to parse flags: %v", err)
+	}
+
+	if cmd.OpenAPIConfig == nil {
+		cmd.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme, customexternalmetrics.Scheme))
+		cmd.OpenAPIConfig.Info.Title = "prometheus-metrics-adapter"
+		cmd.OpenAPIConfig.Info.Version = "1.0.0"
+	}
+
+	if cmd.OpenAPIV3Config == nil && utilfeature.DefaultFeatureGate.Enabled(features.OpenAPIV3) {
+		cmd.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(generatedopenapi.GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(api.Scheme, customexternalmetrics.Scheme))
+		cmd.OpenAPIV3Config.Info.Title = "prometheus-metrics-adapter"
+		cmd.OpenAPIV3Config.Info.Version = "1.0.0"
 	}
 
 	// if --metrics-max-age is not set, make it equal to --metrics-relist-interval
@@ -388,7 +399,7 @@ func makeKubeconfigHTTPClient(inClusterAuth bool, kubeConfigPath string) (*http.
 }
 
 func makePrometheusCAClient(caFilePath string, tlsCertFilePath string, tlsKeyFilePath string) (*http.Client, error) {
-	data, err := ioutil.ReadFile(caFilePath)
+	data, err := os.ReadFile(caFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read prometheus-ca-file: %v", err)
 	}
@@ -408,6 +419,7 @@ func makePrometheusCAClient(caFilePath string, tlsCertFilePath string, tlsKeyFil
 				TLSClientConfig: &tls.Config{
 					RootCAs:      pool,
 					Certificates: []tls.Certificate{tlsClientCerts},
+					MinVersion:   tls.VersionTLS12,
 				},
 			},
 		}, nil
@@ -416,7 +428,8 @@ func makePrometheusCAClient(caFilePath string, tlsCertFilePath string, tlsKeyFil
 	return &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				RootCAs: pool,
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS12,
 			},
 		},
 	}, nil

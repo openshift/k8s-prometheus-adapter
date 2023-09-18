@@ -1,3 +1,17 @@
+// Copyright 2022 The Kubernetes Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dynamicmapper
 
 import (
@@ -75,35 +89,36 @@ func (m *RegeneratingDiscoveryRESTMapper) KindsFor(resource schema.GroupVersionR
 	defer m.mu.RUnlock()
 
 	return m.delegate.KindsFor(resource)
-
 }
+
 func (m *RegeneratingDiscoveryRESTMapper) ResourceFor(input schema.GroupVersionResource) (schema.GroupVersionResource, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.delegate.ResourceFor(input)
-
 }
+
 func (m *RegeneratingDiscoveryRESTMapper) ResourcesFor(input schema.GroupVersionResource) ([]schema.GroupVersionResource, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.delegate.ResourcesFor(input)
-
 }
+
 func (m *RegeneratingDiscoveryRESTMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.delegate.RESTMapping(gk, versions...)
-
 }
+
 func (m *RegeneratingDiscoveryRESTMapper) RESTMappings(gk schema.GroupKind, versions ...string) ([]*meta.RESTMapping, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.delegate.RESTMappings(gk, versions...)
 }
+
 func (m *RegeneratingDiscoveryRESTMapper) ResourceSingularizer(resource string) (singular string, err error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

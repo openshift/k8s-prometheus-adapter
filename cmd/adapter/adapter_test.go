@@ -27,7 +27,6 @@ import (
 const certsDir = "testdata"
 
 func TestMakeKubeconfigHTTPClient(t *testing.T) {
-
 	tests := []struct {
 		kubeconfigPath string
 		inClusterAuth  bool
@@ -71,16 +70,13 @@ func TestMakeKubeconfigHTTPClient(t *testing.T) {
 					t.Error("HTTP client Transport is nil, expected http.RoundTripper")
 				}
 			}
-		} else {
-			if err == nil {
-				t.Errorf("Error is nil, expected %v", err)
-			}
+		} else if err == nil {
+			t.Errorf("Error is nil, expected %v", err)
 		}
 	}
 }
 
 func TestMakePrometheusCAClient(t *testing.T) {
-
 	tests := []struct {
 		caFilePath      string
 		tlsCertFilePath string
@@ -140,16 +136,13 @@ func TestMakePrometheusCAClient(t *testing.T) {
 					t.Errorf("TLS certificates is %+v, expected nil", prometheusCAClient.Transport.(*http.Transport).TLSClientConfig.Certificates)
 				}
 			}
-		} else {
-			if err == nil {
-				t.Errorf("Error is nil, expected %v", err)
-			}
+		} else if err == nil {
+			t.Errorf("Error is nil, expected %v", err)
 		}
 	}
 }
 
 func TestParseHeaderArgs(t *testing.T) {
-
 	tests := []struct {
 		args    []string
 		headers http.Header
@@ -182,6 +175,37 @@ func TestParseHeaderArgs(t *testing.T) {
 		got := parseHeaderArgs(test.args)
 		if !reflect.DeepEqual(got, test.headers) {
 			t.Errorf("Expected %#v but got %#v", test.headers, got)
+		}
+	}
+}
+
+func TestFlags(t *testing.T) {
+	cmd := &PrometheusAdapter{
+		PrometheusURL: "https://localhost",
+	}
+	cmd.addFlags()
+
+	flags := cmd.FlagSet
+	if flags == nil {
+		t.Fatalf("FlagSet should not be nil")
+	}
+
+	expectedFlags := []struct {
+		flag         string
+		defaultValue string
+	}{
+		{flag: "v", defaultValue: "0"},                              // logging flag (klog)
+		{flag: "prometheus-url", defaultValue: "https://localhost"}, // default is set in cmd
+	}
+
+	for _, e := range expectedFlags {
+		flag := flags.Lookup(e.flag)
+		if flag == nil {
+			t.Errorf("Flag %q expected to be present, was absent", e.flag)
+			continue
+		}
+		if flag.DefValue != e.defaultValue {
+			t.Errorf("Expected default value %q for flag %q, got %q", e.defaultValue, e.flag, flag.DefValue)
 		}
 	}
 }

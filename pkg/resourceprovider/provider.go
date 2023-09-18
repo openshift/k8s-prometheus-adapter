@@ -43,7 +43,6 @@ import (
 
 var (
 	nodeResource = schema.GroupResource{Resource: "nodes"}
-	nsResource   = schema.GroupResource{Resource: "ns"}
 	podResource  = schema.GroupResource{Resource: "pods"}
 )
 
@@ -72,7 +71,6 @@ func newResourceQuery(cfg config.ResourceRule, mapper apimeta.RESTMapper) (resou
 		nodeQuery:      nodeQuery,
 		containerLabel: cfg.ContainerLabel,
 	}, nil
-
 }
 
 // resourceQuery represents query information for querying resource metrics for some resource,
@@ -200,7 +198,7 @@ func (p *resourceProvider) assignForPod(pod *metav1.PartialObjectMetadata, resul
 	}
 
 	containerMetrics := make(map[string]metrics.ContainerMetrics)
-	earliestTs := pmodel.Latest
+	earliestTS := pmodel.Latest
 
 	// organize all the CPU results
 	for _, cpu := range cpuRes {
@@ -212,8 +210,8 @@ func (p *resourceProvider) assignForPod(pod *metav1.PartialObjectMetadata, resul
 			}
 		}
 		containerMetrics[containerName].Usage[corev1.ResourceCPU] = *resource.NewMilliQuantity(int64(cpu.Value*1000.0), resource.DecimalSI)
-		if cpu.Timestamp.Before(earliestTs) {
-			earliestTs = cpu.Timestamp
+		if cpu.Timestamp.Before(earliestTS) {
+			earliestTS = cpu.Timestamp
 		}
 	}
 
@@ -227,8 +225,8 @@ func (p *resourceProvider) assignForPod(pod *metav1.PartialObjectMetadata, resul
 			}
 		}
 		containerMetrics[containerName].Usage[corev1.ResourceMemory] = *resource.NewMilliQuantity(int64(mem.Value*1000.0), resource.BinarySI)
-		if mem.Timestamp.Before(earliestTs) {
-			earliestTs = mem.Timestamp
+		if mem.Timestamp.Before(earliestTS) {
+			earliestTS = mem.Timestamp
 		}
 	}
 
@@ -251,7 +249,7 @@ func (p *resourceProvider) assignForPod(pod *metav1.PartialObjectMetadata, resul
 			CreationTimestamp: metav1.Now(),
 		},
 		// store the time in the final format
-		Timestamp: metav1.NewTime(earliestTs.Time()),
+		Timestamp: metav1.NewTime(earliestTS.Time()),
 		Window:    metav1.Duration{Duration: p.window},
 	}
 

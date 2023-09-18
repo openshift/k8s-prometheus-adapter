@@ -38,6 +38,7 @@ type nodeMetrics struct {
 	groupResource schema.GroupResource
 	metrics       NodeMetricsGetter
 	nodeLister    v1listers.NodeLister
+	nodeSelector  []labels.Requirement
 }
 
 var _ rest.KindProvider = &nodeMetrics{}
@@ -46,18 +47,24 @@ var _ rest.Getter = &nodeMetrics{}
 var _ rest.Lister = &nodeMetrics{}
 var _ rest.Scoper = &nodeMetrics{}
 var _ rest.TableConvertor = &nodeMetrics{}
+var _ rest.SingularNameProvider = &nodeMetrics{}
 
-func newNodeMetrics(groupResource schema.GroupResource, metrics NodeMetricsGetter, nodeLister v1listers.NodeLister) *nodeMetrics {
+func newNodeMetrics(groupResource schema.GroupResource, metrics NodeMetricsGetter, nodeLister v1listers.NodeLister, nodeSelector []labels.Requirement) *nodeMetrics {
 	return &nodeMetrics{
 		groupResource: groupResource,
 		metrics:       metrics,
 		nodeLister:    nodeLister,
+		nodeSelector:  nodeSelector,
 	}
 }
 
 // New implements rest.Storage interface
 func (m *nodeMetrics) New() runtime.Object {
 	return &metrics.NodeMetrics{}
+}
+
+// Destroy implements rest.Storage interface
+func (m *nodeMetrics) Destroy() {
 }
 
 // Kind implements rest.KindProvider interface
@@ -89,6 +96,9 @@ func (m *nodeMetrics) nodes(ctx context.Context, options *metainternalversion.Li
 	labelSelector := labels.Everything()
 	if options != nil && options.LabelSelector != nil {
 		labelSelector = options.LabelSelector
+	}
+	if m.nodeSelector != nil {
+		labelSelector = labelSelector.Add(m.nodeSelector...)
 	}
 	nodes, err := m.nodeLister.List(labelSelector)
 	if err != nil {
@@ -133,11 +143,11 @@ func (m *nodeMetrics) ConvertToTable(ctx context.Context, object runtime.Object,
 	switch t := object.(type) {
 	case *metrics.NodeMetrics:
 		table.ResourceVersion = t.ResourceVersion
-		table.SelfLink = t.SelfLink
+		table.SelfLink = t.SelfLink //nolint:staticcheck // keep deprecated field to be backward compatible
 		addNodeMetricsToTable(&table, *t)
 	case *metrics.NodeMetricsList:
 		table.ResourceVersion = t.ResourceVersion
-		table.SelfLink = t.SelfLink
+		table.SelfLink = t.SelfLink //nolint:staticcheck // keep deprecated field to be backward compatible
 		table.Continue = t.Continue
 		addNodeMetricsToTable(&table, t.Items...)
 	default:
@@ -164,4 +174,9 @@ func (m *nodeMetrics) getMetrics(nodes ...*corev1.Node) ([]metrics.NodeMetrics, 
 // NamespaceScoped implements rest.Scoper interface
 func (m *nodeMetrics) NamespaceScoped() bool {
 	return false
+}
+
+// GetSingularName implements rest.SingularNameProvider interface
+func (m *nodeMetrics) GetSingularName() string {
+	return "node"
 }
