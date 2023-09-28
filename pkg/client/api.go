@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/model"
+	"golang.org/x/time/rate"
 	"k8s.io/klog/v2"
 )
 
@@ -128,10 +129,16 @@ func (c *httpAPIClient) Do(ctx context.Context, verb, endpoint string, query url
 
 // NewGenericAPIClient builds a new generic Prometheus API client for the given base URL and HTTP Client.
 func NewGenericAPIClient(client *http.Client, baseURL *url.URL, headers http.Header) GenericAPIClient {
-	return &httpAPIClient{
+	c := &httpAPIClient{
 		client:  client,
 		baseURL: baseURL,
 		headers: headers,
+	}
+
+	return &rateLimitClient{
+		c: c,
+		// Allow for 100 concurrent queries/s on average.
+		rl: rate.NewLimiter(100, 1),
 	}
 }
 
