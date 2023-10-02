@@ -19,9 +19,44 @@ package client
 import (
 	"context"
 	"net/url"
+
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
 )
 
+// Without a limit, the adapter could flood the Prometheus API with many
+// requests when there are many pods running in the cluster because a query for
+// getting all pod metrics would translate into (2 x pod number) queries to the
+// Prometheus API.
+// In the worst case, the Prometheus pods can hit their SOMAXCONN limit leading
+// to timed-out requests from other clients. In particular it has been reported
+// that it could fail the Kubelet liveness probes and lead to Prometheus pod
+// restarts.
+// The number has been chosen from empirical data.
 const maxConcurrentRequests = 100
+
+var (
+	inflightRequests = metrics.NewGauge(
+		&metrics.GaugeOpts{
+			Namespace: "prometheus_adapter",
+			Subsystem: "prometheus_client",
+			Name:      "inflight_requests",
+			Help:      "Number of inflight requests to the Prometheus service",
+		})
+
+	maxRequests = metrics.NewGauge(
+		&metrics.GaugeOpts{
+			Namespace: "prometheus_adapter",
+			Subsystem: "prometheus_client",
+			Name:      "max_requests",
+			Help:      "Maximum number of requests to the Prometheus service",
+		})
+)
+
+func init() {
+	legacyregistry.MustRegister(inflightRequests, maxRequests)
+	maxRequests.Set(maxConcurrentRequests)
+}
 
 type requestLimitClient struct {
 	c        GenericAPIClient
@@ -38,7 +73,9 @@ func newRequestLimiter(c GenericAPIClient) GenericAPIClient {
 func (c *requestLimitClient) Do(ctx context.Context, verb, endpoint string, query url.Values) (APIResponse, error) {
 	select {
 	case c.inflight <- struct{}{}:
+		inflightRequests.Inc()
 		defer func() {
+			inflightRequests.Dec()
 			<-c.inflight
 		}()
 	case <-ctx.Done():
