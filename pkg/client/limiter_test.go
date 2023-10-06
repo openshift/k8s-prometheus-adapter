@@ -34,6 +34,8 @@ func TestRequestLimitClient(t *testing.T) {
 		total   atomic.Int64
 		unblock = make(chan struct{})
 	)
+
+	srvCtx, srvCancel := context.WithCancel(ctx)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		total.Add(1)
 
@@ -42,10 +44,16 @@ func TestRequestLimitClient(t *testing.T) {
 			return
 		}
 
-		// Requests will be blocked until the test closes the unblock channel.
-		<-unblock
+		// Requests will be blocked until the test closes the unblock channel or the test fails.
+		select {
+		case <-unblock:
+		case <-srvCtx.Done():
+		}
 	}))
-	defer srv.Close()
+	defer func() {
+		srvCancel()
+		srv.Close()
+	}()
 
 	// Make as many requests as the max allowed number + 1.
 	var (
@@ -53,10 +61,7 @@ func TestRequestLimitClient(t *testing.T) {
 		errChan = make(chan error, maxConcurrentRequests+1)
 		u, _    = url.Parse(srv.URL)
 		c       = NewGenericAPIClient(&http.Client{}, u, nil)
-	)
-	for i := 0; i < maxConcurrentRequests+1; i++ {
-		wg.Add(1)
-		go func(i int) {
+		do      = func(i int) {
 			defer wg.Done()
 
 			_, err := c.Do(ctx, "GET", "/", nil)
@@ -64,21 +69,37 @@ func TestRequestLimitClient(t *testing.T) {
 				err = fmt.Errorf("request #%d: %w", i, err)
 			}
 			errChan <- err
+		}
+	)
+	for i := 0; i < maxConcurrentRequests; i++ {
+		wg.Add(1)
+		go func(i int) {
+			do(i)
 		}(i)
 	}
 
-	// Wait for the unblocked requests to hit the server.
+	// Wait for the first maxConcurrentRequests requests to hit the server.
 	for total.Load() != maxConcurrentRequests {
 	}
 
-	// Make one more blocked request which should timeout before hitting the server.
+	// Make one more request which should be blocked at the client level.
+	wg.Add(1)
+	go func() {
+		do(maxConcurrentRequests)
+	}()
+
+	// Make one more request which should be canceled before hitting the server.
 	ctx2, _ := context.WithTimeout(ctx, time.Second)
 	_, err := c.Do(ctx2, "GET", "/nonblocking", nil)
 	switch {
 	case err == nil:
-		t.Fatalf("expected %dth request to fail", maxConcurrentRequests+2)
+		t.Fatal("expected request to fail")
 	case ctx2.Err() == nil:
-		t.Fatalf("expected %dth request to timeout", maxConcurrentRequests+2)
+		t.Fatal("expected request to timeout")
+	}
+
+	if total.Load() != maxConcurrentRequests {
+		t.Fatalf("expected %d requests on the server side, got %d", maxConcurrentRequests, total.Load())
 	}
 
 	// Release all inflight requests.
