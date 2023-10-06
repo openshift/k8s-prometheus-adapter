@@ -26,12 +26,12 @@ import (
 
 // Without a limit, the adapter could flood the Prometheus API with many
 // requests when there are many pods running in the cluster because a query for
-// getting all pod metrics would translate into (2 x pod number) queries to the
-// Prometheus API.
-// In the worst case, the Prometheus pods can hit their SOMAXCONN limit leading
-// to timed-out requests from other clients. In particular it has been reported
-// that it could fail the Kubelet liveness probes and lead to Prometheus pod
-// restarts.
+// getting pod metrics across all namespaces translates into (2 x the number of
+// namespaces) queries to the Prometheus API.
+// In the worst case, the Prometheus pods can hit the maximum number of
+// listening sockets allowed by the kernel (e.g. SOMAXCONN) leading to
+// timed-out requests from other clients. In particular it can make the Kubelet
+// liveness probes being reported as down and trigger Prometheus pod restarts.
 // The number has been chosen from empirical data.
 const maxConcurrentRequests = 100
 
