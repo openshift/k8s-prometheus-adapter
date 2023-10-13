@@ -130,11 +130,13 @@ func (c *httpAPIClient) Do(ctx context.Context, verb, endpoint string, query url
 
 // NewGenericAPIClient builds a new generic Prometheus API client for the given base URL and HTTP Client.
 func NewGenericAPIClient(client *http.Client, baseURL *url.URL, headers http.Header) GenericAPIClient {
-	return &httpAPIClient{
+	c := &httpAPIClient{
 		client:  client,
 		baseURL: baseURL,
 		headers: headers,
 	}
+
+	return newRequestLimiter(c)
 }
 
 const (
