@@ -31,13 +31,13 @@ import (
 func TestRequestLimitClient(t *testing.T) {
 	var (
 		ctx     = context.Background()
-		total   atomic.Int64
+		total   = new(int64)
 		unblock = make(chan struct{})
 	)
 
 	srvCtx, srvCancel := context.WithCancel(ctx)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		total.Add(1)
+		atomic.AddInt64(total, 1)
 
 		w.Write([]byte("{}"))
 		if r.URL.Path == "/nonblocking" {
@@ -79,7 +79,7 @@ func TestRequestLimitClient(t *testing.T) {
 	}
 
 	// Wait for the first maxConcurrentRequests requests to hit the server.
-	for total.Load() != maxConcurrentRequests {
+	for atomic.LoadInt64(total) != maxConcurrentRequests {
 	}
 
 	// Make one more request which should be blocked at the client level.
@@ -98,8 +98,8 @@ func TestRequestLimitClient(t *testing.T) {
 		t.Fatal("expected request to timeout")
 	}
 
-	if total.Load() != maxConcurrentRequests {
-		t.Fatalf("expected %d requests on the server side, got %d", maxConcurrentRequests, total.Load())
+	if atomic.LoadInt64(total) != maxConcurrentRequests {
+		t.Fatalf("expected %d requests on the server side, got %d", maxConcurrentRequests, atomic.LoadInt64(total))
 	}
 
 	// Release all inflight requests.
