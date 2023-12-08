@@ -9,7 +9,7 @@ RUN mv /go/src/github.com/kubernetes-sigs/prometheus-adapter/adapter /usr/bin/ad
 FROM registry.ci.openshift.org/ocp/4.15:base-rhel9
 
 COPY --from=builder /usr/bin/adapter /usr/bin/adapter
-    
+
 LABEL io.k8s.display-name="OpenShift Prometheus Adapter" \
       io.k8s.description="This is a component of OpenShift Container Platform that provides the Kubernetes resource metrics API based on Prometheus metrics" \
       io.openshift.tags="openshift" \
