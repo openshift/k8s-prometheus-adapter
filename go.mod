@@ -115,3 +115,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+replace sigs.k8s.io/metrics-server => github.com/slashpai/metrics-server v0.0.0-20240919063601-b54e3f03e27d
