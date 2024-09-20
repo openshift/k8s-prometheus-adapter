@@ -1193,7 +1193,7 @@ sigs.k8s.io/custom-metrics-apiserver/pkg/registry/external_metrics
 ## explicit; go 1.18
 sigs.k8s.io/json
 sigs.k8s.io/json/internal/golang/encoding/json
-# sigs.k8s.io/metrics-server v0.0.0-20230614201618-5daafd91f747
+# sigs.k8s.io/metrics-server v0.0.0-20230614201618-5daafd91f747 => github.com/slashpai/metrics-server v0.0.0-20240919063601-b54e3f03e27d
 ## explicit; go 1.20
 sigs.k8s.io/metrics-server/pkg/api
 # sigs.k8s.io/structured-merge-diff/v4 v4.2.3
@@ -1206,3 +1206,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.3.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
+# sigs.k8s.io/metrics-server => github.com/slashpai/metrics-server v0.0.0-20240919063601-b54e3f03e27d
