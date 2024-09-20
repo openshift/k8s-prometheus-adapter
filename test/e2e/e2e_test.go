@@ -49,6 +49,7 @@ var (
 	metricsClient metrics.Interface
 )
 
+// TestMain
 func TestMain(m *testing.M) {
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if len(kubeconfig) == 0 {
